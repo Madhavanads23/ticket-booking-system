@@ -1,0 +1,93 @@
+import os
+import uuid
+from flask import Flask, request, jsonify, render_template
+import stripe
+
+# Initialize the Flask app
+app = Flask(__name__)
+
+# Set up Stripe API Key
+stripe.api_key = "your-stripe-secret-key"  # Replace with your actual Stripe secret key
+
+# A mock database for storing bookings (in a real app, you'd use a database like MySQL, PostgreSQL, etc.)
+bookings_db = {}
+
+@app.route('/book', methods=['POST'])
+def process_booking():
+    # Extract data from the request (e.g., user info, payment details, event details)
+    data = request.json
+    user_email = data.get('user_email')
+    event_name = data.get('event_name')
+    event_date = data.get('event_date')
+    seat_number = data.get('seat_number')
+    total_price = data.get('total_price')
+    payment_token = data.get('payment_token')  # Stripe token for the payment
+
+    # Step 1: Process the payment
+    try:
+        # Charge the user's card using the Stripe API
+        charge = stripe.Charge.create(
+            amount=int(total_price * 100),  # Stripe charges in cents, so we multiply by 100
+            currency="usd",
+            source=payment_token,
+            description=f"Booking for {event_name} - {seat_number}",
+        )
+
+        # If payment is successful, continue to the next steps
+        if charge['status'] == 'succeeded':
+            # Step 2: Send booking confirmation message
+            booking_reference = str(uuid.uuid4())  # Generate a unique booking reference
+
+            # Save booking details in the mock "database"
+            booking_details = {
+                'user_email': user_email,
+                'event_name': event_name,
+                'event_date': event_date,
+                'seat_number': seat_number,
+                'total_price': total_price,
+                'payment_status': 'Paid',
+                'booking_reference': booking_reference,
+            }
+            bookings_db[booking_reference] = booking_details
+
+            # Step 3: Display booking details
+            booking_summary = {
+                'event_name': event_name,
+                'event_date': event_date,
+                'seat_number': seat_number,
+                'total_price': total_price,
+                'payment_status': 'Successful',
+                'booking_reference': booking_reference,
+            }
+
+            # Return the booking details and confirmation message
+            return jsonify({
+                'message': 'Booking confirmed!',
+                'booking_summary': booking_summary
+            }), 200
+
+        else:
+            return jsonify({'error': 'Payment failed'}), 400
+
+    except stripe.error.CardError as e:
+        return jsonify({'error': f"Payment failed: {e.user_message}"}), 400
+
+    except Exception as e:
+        return jsonify({'error': f"An error occurred: {str(e)}"}), 500
+
+@app.route('/confirmation/<booking_reference>', methods=['GET'])
+def get_booking_confirmation(booking_reference):
+    # Fetch booking details using the booking reference
+    booking = bookings_db.get(booking_reference)
+
+    if booking:
+        # Step 4: Display detailed booking confirmation
+        return jsonify({
+            'message': 'Booking details',
+            'booking_details': booking
+        }), 200
+    else:
+        return jsonify({'error': 'Booking not found'}), 404
+
+if __name__ == '__main__':
+    app.run(debug=True)
